@@ -16,10 +16,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-service = build("drive", "v3", credentials=creds)
-gspread_client = gspread.authorize(creds)
-
 
 def authenticate():
     """Shows basic usage of the Sheets API.
@@ -31,7 +27,7 @@ def authenticate():
     # time.
     if os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
+    # If there are no (valid) credentials available, let the user log in.    
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
@@ -41,25 +37,41 @@ def authenticate():
         # Save the credentials for the next run
         with open("token.json", "w") as token:
             token.write(creds.to_json())
+            
+    service = build("drive", "v3", credentials=creds)
+    gspread_client = gspread.authorize(creds)
+    return service, gspread_client
 
 
-def list_files_in_folder(folder_id, suffix=None):
+def list_files_in_folder(service, folder_id, suffix=None):
     # List files in a folder
     q = f"'{folder_id}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.spreadsheet'"
     if suffix:
         q += f" and name contains '{suffix}'"
-    results = (
+    result = (
         service.files()
         .list(
             q=q,
         )
         .execute()
     )
-    files = results.get("files", [])
+    files = [*result["files"]]
+    # paginate
+    while "nextPageToken" in result:
+        next_page = (
+            service.files()
+            .list(
+                q=q,
+                pageToken=result["nextPageToken"],
+            )
+            .execute()
+        )
+        files.extend(next_page.get("files", []))
+        result = next_page
     return files
 
 
-def download_file(file_id, destination):
+def download_file(service, file_id, destination):
     # Download a file
     request = service.files().get_media(fileId=file_id)
     fh = open(destination, "wb")
@@ -72,29 +84,29 @@ def download_file(file_id, destination):
     fh.write(file.getvalue())
 
 
-def download_folder(folder_id, folder_path):
+def download_folder(service, folder_id, folder_path):
     os.makedirs(folder_path, exist_ok=True)
-    files = list_files_in_folder(folder_id)
+    files = list_files_in_folder(service, folder_id)
     for file in files:
         file_path = os.path.join(folder_path, file["name"])
         if file["mimeType"] == "application/vnd.google-apps.folder":
-            download_folder(file["id"], file_path)
+            download_folder(service, file["id"], file_path)
         else:
             if not os.path.exists(file_path):
-                download_file(file["id"], file_path)
+                download_file(service, file["id"], file_path)
 
 
-def synch_gdrive(folder_id):
-    month_folders = list_files_in_folder(folder_id)
+def synch_gdrive(service, folder_id):
+    month_folders = list_files_in_folder(service, folder_id)
     root = "data"
     for month_folder in month_folders:
         folder_name = month_folder["name"]
         folder_id = month_folder["id"]
         print(f"Downloading {folder_name}")
-        download_folder(folder_id, os.path.join(root, folder_name))
+        download_folder(service, folder_id, os.path.join(root, folder_name))
 
 
-def upload_gsheet_api(folder_id, pandas_df, directory):
+def upload_gsheet_api(gspread_client, folder_id, pandas_df, directory):
     spreadsheet = gspread_client.create(f"Ausgaben_{directory}", folder_id)
     sheet = spreadsheet.sheet1
     sheet.update_title("Ausgaben")
@@ -110,19 +122,61 @@ def upload_gsheet_api(folder_id, pandas_df, directory):
 
     sheet.update([pandas_df.columns.values.tolist()] + pandas_df.values.tolist())
     sheet.columns_auto_resize(0, 20)
-    # color empty cells red
-    for row, col in zip(*index_tuple_empty):
-        sheet.format(
-            f"{chr(65 + col)}{row+2}",
-            {
-                "backgroundColor": {
-                    "red": 247 / 255,
-                    "green": 153 / 255,
-                    "blue": 148 / 255,
-                }
-            },
-        )
 
+    
+      # Prepare batch requests
+    requests = []
+
+    # Header row formatting
+    requests.append({
+        "repeatCell": {
+            "range": {
+                "sheetId": sheet.id,
+                "startRowIndex": 0,
+                "endRowIndex": 1,
+                "startColumnIndex": 0,
+                "endColumnIndex": len(pandas_df.columns),
+            },
+            "cell": {
+                "userEnteredFormat": {
+                    "textFormat": {"bold": True},
+                },
+            },
+            "fields": "userEnteredFormat.textFormat.bold",
+        }
+    })
+
+    # Format empty cells
+    for row_int64, col_int64 in zip(*index_tuple_empty):
+        row = int(row_int64)
+        col = int(col_int64)
+        requests.append({
+            "updateCells": {
+                "rows": [{
+                    "values": [{
+                        "userEnteredFormat": {
+                            "backgroundColor": {
+                                "red": 247 / 255,
+                                "green": 153 / 255,
+                                "blue": 148 / 255,
+                            }
+                        }
+                    }]
+                }],
+                "fields": "userEnteredFormat.backgroundColor",
+                "range": {
+                    "sheetId": sheet.id,
+                    "startRowIndex": row + 1,
+                    "endRowIndex": row + 2,
+                    "startColumnIndex": col,
+                    "endColumnIndex": col + 1,
+                },
+            }
+        })
+
+    # Execute batch update for formatting
+    spreadsheet.batch_update({"requests": requests})
+                
     # Aggregation
     agg_sheet = spreadsheet.add_worksheet("Aggregation", 20, 20)
     agg_sheet.format("A1:Z1", {"textFormat": {"bold": True}})

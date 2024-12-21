@@ -1,8 +1,13 @@
 from PIL import Image, ImageOps
 from io import BytesIO
 import base64
+import openai
+import json
+from pathlib import Path
+import hashlib
+from openai import OpenAI
 
-
+client = OpenAI()
 def encode_image(image_path):
     img = Image.open(image_path)
     img = ImageOps.exif_transpose(img)
@@ -33,8 +38,10 @@ def get_prompt(img_paths: list[str]) -> dict:
                     total_net_amount: number,
                     vat_amount: number,
                     company_name: string
+                    description: string
                 }."""
-                "null is allowed for any attribute. (Do not use 'null', but null as a value.)",
+                "null is allowed for any attribute. (Do not use 'null', but null as a value.)"
+                "The description should also be in German and should briefly describe the products or services bought.",
             },
             {
                 "role": "user",
@@ -57,3 +64,20 @@ def get_prompt(img_paths: list[str]) -> dict:
         ],
         "max_tokens": 300,
     }
+
+def query_openai(query_dict: dict):
+    if not Path("cache.json").exists():
+        empty_dict = {}
+        Path("cache.json").write_text(json.dumps(empty_dict))
+        
+    cache = json.loads(Path("cache.json").read_text())
+    hashed = hashlib.md5(json.dumps(query_dict).encode()).hexdigest()
+    if hashed in cache:
+        print("Cache hit!")
+        return cache[hashed]
+    else:
+        response = client.chat.completions.create(**query_dict)
+        response_string = response.choices[0].message.content
+        cache[hashed] = response_string
+        Path("cache.json").write_text(json.dumps(cache))
+        return response_string

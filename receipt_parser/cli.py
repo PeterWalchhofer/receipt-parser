@@ -1,7 +1,7 @@
 import typer
 from openai import OpenAI
 from receipt_parser.entitites.receipt import Receipt
-from receipt_parser.llm import get_prompt
+from receipt_parser.llm import get_prompt, query_openai
 from receipt_parser.google import (
     authenticate,
     upload_gsheet_api,
@@ -52,19 +52,17 @@ def scan_receipts(
         "1BBOYB4PABOBl0Obwt8QSrcAPzWffa9HE", help="Google Drive folder ID"
     ),
 ):
-    authenticate()
-    synch_gdrive(folder_id)
+    service, gspread_client = authenticate()
+    synch_gdrive(service, folder_id)
     mapping = pdf_to_jpg()
 
-    client = OpenAI()
-
-    gdrive_dirs = list_files_in_folder(folder_id)
+    gdrive_dirs = list_files_in_folder(service, folder_id)
     for dir_obj in gdrive_dirs:
         subdir = dir_obj["name"]
         image_paths_gdrive = {
-            file["name"]: file for file in list_files_in_folder(dir_obj["id"])
+            file["name"]: file for file in list_files_in_folder(service, dir_obj["id"])
         }
-        image_paths = sorted(glob.glob(f"data/{subdir}/*.jpeg"))
+        image_paths = sorted(glob.glob(f"data/{subdir}/*.jpg"))
         grouped_image_paths = [
             list(g)
             for k, g in groupby(image_paths, lambda x: extract_part_suffix_if_exists(x))
@@ -91,9 +89,8 @@ def scan_receipts(
             df_img_paths.append(file_names)
             df_img_urls.append(img_urls)
 
-            response = client.chat.completions.create(**get_prompt(img_paths))
-            json_raw = response.choices[0].message.content
-            json_dict = json.loads(json_raw)
+            response = query_openai(get_prompt(img_paths))
+            json_dict = json.loads(response)
             receipt = Receipt(**json_dict)
             receipts.append(receipt)
 
@@ -108,4 +105,4 @@ def scan_receipts(
         df = pd.read_csv(csv_path)
         print(f"Uploading {csv_path}")
 
-        upload_gsheet_api(dir_obj["id"], df, subdir)
+        upload_gsheet_api(gspread_client, dir_obj["id"], df, subdir)

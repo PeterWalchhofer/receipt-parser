@@ -9,3 +9,4 @@ class Receipt(BaseModel):
     total_net_amount: Optional[float] = Field(None, description="Summe der Rechnung ohne MwSt.")
     vat_amount: Optional[float] = Field(None, description="MwSt. Betrag")
     company_name: Optional[str] = Field(None, description="Name des ausstellenden Unternehmens")
+    description: Optional[str] = Field(None, description="Beschreibung der gekauften Produkte oder Dienstleistungen")
