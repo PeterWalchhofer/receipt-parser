@@ -1,10 +1,14 @@
 # Receipt parser
 
-This is a little script that passes a list of receipts in google drive to chatgpt in order to extract information like
-total gross amount, total net amount, total vat, date, company.
+This is a little script that passes a list of receipts in google drive to chatGPT in order to extract information like
+total gross amount, total net amount, total vat, date, company and description.
 
 The resulting google sheet is a table with all values listed and a link to the original image for you to double-check.
 Empty values are marked red. Basic aggregation statistics are saved in a second worksheet.
+
+Manual re-check is necessary, but simplified by the link to the original image.
+
+![screenshot](assets/screenshot_gdrive.png)
 
 ## Authentication
 1. Follow the [instructions](https://developers.google.com/drive/api/quickstart/python) for setting up a project and creating an OAuth 2.0 Client ID.
@@ -15,8 +19,8 @@ Empty values are marked red. Basic aggregation statistics are saved in a second 
 ## Data Requirements
 The receipts should either be imgages or pdfs. If a receipt is in multiple files, you can name them like `{data_name}_1.jpg`, `{data_name}_2.jpg`.
 PDFs are transformed into images using pdf2image utilizing this naming scheme for multiple pages. Make sure you have installed poppler (see [docs](https://pdf2image.readthedocs.io/en/latest/installation.html)).
-The Folder root that you use to call the cli, assumes to have sub-folders for each month. In those folders are the actual receipts stored.
-For each month a single spreadsheet is generated.
+The Folder root that you use to call the cli, assumes to have sub-folders (e.g. for each month, name is irrelevant). In those folders are the actual receipts stored.
+For each sub-folder a single spreadsheet is generated.
 The structure should look like this:
 ```
 root
